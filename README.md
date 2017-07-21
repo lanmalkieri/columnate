@@ -27,17 +27,7 @@ optional arguments:
 
   -b 1-5,10-15,..., --bytes 1-5,10-15,...
 
-                        specify columns by fixed byte positions; use a
-
-                        trailing "-" or "+" to include all remaining bytes
-
   -c 1,3+5,6-9,..., --columns 1,3+5,6-9,...
-
-                        show specified columns only; use "x+y+..." or "x-y" to
-
-                        merge two or more columns, or a trailing "-" or "+" to
-
-                        merge all remaining columns
 
   --header H1,H2,...    column headers
 
@@ -51,23 +41,13 @@ optional arguments:
 
   --properties PROP=VAL1[:[:]VAL2],...
 
-                        table, row, and column properties (colors and
-
-                        justification) passed directly to ConsoleTable
-
   -s PATTERN, --separator PATTERN
 
-                        PATTERN that separates columns; default='\s+'
-
   -t TITLE, --title TITLE
-
-                        title of the table
 
   -w, --whitespace      strip leading and trailing whitespace from column data
 
   -x 2,4,..., --exclude 2,4,...
-
-                        exclude (skip) these columns
 
 Options -b, -c, and -x are mutually exclusive.
 

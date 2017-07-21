@@ -1,0 +1,364 @@
+#!/usr/bin/python -u
+
+#---------------------------------------------------------------------------#
+#                                                                           #
+#                 Rick Esterling <rickest@hotspringsmt.net>                 #
+#                Copyright 2001 - 2016, All Rights Reserved                 #
+#                                                                           #
+#---------------------------------------------------------------------------#
+# Useful ConsoleTable constructors (--properties):                          #
+#   color             # table color (ANSI)                                  #
+#   hcolor            # heading color (ANSI)                                #
+#   hjustify          # heading justification ('left', 'right', 'center')   #
+#   line_separators   # lines between rows ('true', 'false')                #
+#   tcolor            # title color (ANSI)                                  #
+#   tjustify          # title justification ('left', 'right', 'center')     #
+#                                                                           #
+# The following column and row properties may be specified multiple times;  #
+# where conflicts or overlaps occur, the last (right-most) match wins.      #
+# Column properties (--properties)                                          #
+#   cjustify          # column justification ('2:left', '3:center', etc.)   #
+#   ccolor            # column color ('2:32')                               #
+#   cbgcolor          # column background color ('2:46')                    #
+# Row properties (--properties):                                            #
+#   rcolor            # row color ('4:35')                                  #
+#   rbgcolor          # row background color ('4:44')                       #
+#   recolor           # regex row color ('initrd.*generic:35')              #
+#                                                                           #
+# Colors should be specified using raw ANSI values; i.e.,                   #
+#   --prop='tcolor=38;5;100;48;5;226,hcolor=34;1,tjustify=left'             #
+#                                                                           #
+# The PATTERN for 'recolor' may contain one or more colons (':') as part    #
+# of the regular expression but a colon is also used to delimit PATTERN     #
+# from the ANSI code. The 'recolor' property may therefore use either a     #
+# single- or double-colon as the delimiter, and must use the latter if      #
+# PATTERN includes a colon to avoid a 'too many values to unpack' error;    #
+# i.e.,                                                                     #
+#     --properties='recolor=one|two:32'                                     #
+#     --properties='recolor=(?:one|two)::32'                                #
+# If the PATTERN you're looking for includes a double-colon, you're         #
+# out of luck.                                                              #
+#                                                                           #
+# You can use 'color' for foreground and background colors in a single      #
+# ANSI sequence ('37;44'), but doing so will override the built-in          #
+# precedence of colors (table, then column, then row). This may be          #
+# required when using 'recolor' since there is no 'rebgcolor' property.     #
+#                                                                           #
+#---------------------------------------------------------------------------#
+# Examples:                                                                 #
+#     ls -lF | columnate -i -c 9+,3,5,6+7+8 --head 'name,owner,size,dts'    #
+#                                                                           #
+#     # Highlight white-on-blue any lines matching the regex 'initrd'       #
+#     ls -lF /boot | columnate -ic 9+,5,6-8 --prop 'recolor=initrd:37;44'   #
+#                                                                           #
+#     # Or color any arbitrary row:                                         #
+#     ls -lF /boot | columnate -ic 9+,5,6+7+8 --prop 'rcolor=5:35'          #
+#                                                                           #
+#     # Column justification                                                #
+#     ls -lF | columnate -i -c 9+,6+7+8,5 --prop='cjustify=3:right'         #
+#                                                                           #
+#     # Column colors                                                       #
+#     ls -lF | columnate -i -c 9+,6-8,5 --prop='ccolor=1:32,ccolor=3:34'    #
+#                                                                           #
+#     # Same things:                                                        #
+#     mount | columnate --head='DEV,PATH,TYPE' -c 1,3,5                     #
+#     mount | columnate --head='DEV,PATH,TYPE' -x 2,4,6,7                   #
+#---------------------------------------------------------------------------#
+
+import os, sys
+import argparse
+#from rae.util import consoletable
+from rae import consoletable
+import re
+
+#---------------------------------------------------------------------------#
+# get_opts                                                                  #
+#---------------------------------------------------------------------------#
+def get_opts():
+    p = argparse.ArgumentParser(
+        prog='columnate',
+        version='1.01',
+        usage='%(prog)s [OPTION]... [FILE]...',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Options -b, -c, and -x are mutually exclusive.\n\n' +
+            "See opening code comments for '--properties' examples.")
+
+    p.add_argument('args', action='store', metavar='FILE', nargs='*',
+        default=[sys.stdin], help='Filename to read; ' +
+        'default=STDIN')
+    p.add_argument('-a', '--ascii', action='store_true',
+        default=False, help='ASCII (non-Unicode) table')
+    p.add_argument('-b', '--bytes', action='store', metavar='1-5,10-15,...',
+        help='specify columns by fixed byte positions; use a trailing ' +
+            '"-" or "+" to include all remaining bytes')
+    p.add_argument('-c', '--columns', action='store', 
+        metavar='1,3+5,6-9,...',
+        help='show specified columns only; use "x+y+..." or "x-y" to merge '
+            'two or more columns, or a trailing "-" or "+" to merge all ' +
+            'remaining columns')
+    p.add_argument('--header', action='store', metavar='H1,H2,...',
+        help='column headers')
+    p.add_argument('-i', '--ignore', action='store_true', 
+        help='ignore parsing errors; see -p')
+    p.add_argument('-n', '--no-borders', action='store_true',
+        help='no ConsoleTable borders; see --pad')
+    p.add_argument('-p', '--partial', action='store_true',
+        help='add partial rows that did not parse; implies -i')
+    p.add_argument('--pad', action='store', default='  ',
+        help="pad character(s) for -n; default='  '")
+    p.add_argument('--properties', action='store', 
+        metavar='PROP=VAL1[:[:]VAL2],...',
+        help='table, row, and column properties (colors and ' +
+            'justification) passed directly to ConsoleTable')
+    p.add_argument('-s', '--separator', metavar='PATTERN', action='store',
+        default=r'\s+', help='PATTERN that separates columns; default=\'\s+\'')
+    p.add_argument('-t', '--title', action='store', metavar='TITLE',
+        help='title of the table')
+    p.add_argument('-w', '--whitespace', action='store_true',
+        help='strip leading and trailing whitespace from column data')
+    p.add_argument('-x', '--exclude', action='store', metavar='2,4,...',
+        help='exclude (skip) these columns')
+
+    opts = p.parse_args()
+    opts.re_separator = re.compile(r'(.*?)(?:' + opts.separator + '|$)')
+
+    if opts.partial:
+        opts.ignore = True
+
+    return opts
+
+#---------------------------------------------------------------------------#
+# get_cols_by_idx                                                           #
+#---------------------------------------------------------------------------#
+def get_cols_by_idx(line):
+    row_new = []
+    idx_new = 0
+
+    # This regex always returns an empty match as the last element.
+    row = opts.re_separator.findall(line)[:-1]
+
+    for colspec in opts.columns.split(','):
+        # Expand ranges; i.e., 3-6 -> 3+4+5+6
+        try:
+            start, stop = colspec.split('-')
+            # An empty stop means a trailing '-', convert it to a '+'
+            # since that's what the actual code works with.
+            if not stop:
+                colspec = colspec[0:-1] + '+'
+            else:
+                colspec = '+'.join(
+                    [str(i) for i in range(int(start), int(stop)+1)])
+        except ValueError:
+            pass
+
+        row_new.append('')
+        lastcol = 0
+        for col in colspec.split('+'):
+            try:
+                if row_new[idx_new]:
+                    row_new[idx_new] += ' '
+                if col:
+                    row_new[idx_new] += row[int(col)-1] 
+                else:
+                    # An empty col means a trailing '+' so add
+                    # everything from lastcol to the end.
+                    row_new[idx_new] += ' '.join(row[lastcol:])
+            except IndexError:
+                if opts.ignore:
+                    if not opts.partial:
+                        row_new = []
+                    break
+                sys.stderr.write('input does not match column ' +
+                    'specification:\n' +
+                    "  '|" + '|'.join(row) + "|'\n" +
+                    "see 'columnate --help', '-i', and '-p'.\n")
+                sys.exit(1)
+            finally:
+                if col:
+                    lastcol = int(col)
+        # This else block will execute only if we did NOT break out of
+        # the inner for loop. This allows a break in the inner for loop
+        # to break out of both for loops.
+        else:
+            idx_new += 1        
+            continue
+        break
+
+    return row_new
+
+#---------------------------------------------------------------------------#
+# get_cols_by_byte                                                          #
+#---------------------------------------------------------------------------#
+def get_cols_by_byte(line):
+    row_new = []
+    idx_new = 0
+
+    # NOTE: In python, a[15] throws an exception if a is only 10 chars
+    # long, but a[n:15] does not. So we're going to have to check those
+    # values by hand.
+    # ALSO: Remember, python slices are up to but not including the stop
+    # index whereas in this app 3-5 means 3, 4, and 5.
+    for colspec in opts.bytes.split(','):
+        row_new.append('')
+
+        # Throws ValueError if '-' is not found.
+        try:
+            # Allow trailing '+', too.
+            if colspec[-1] == '+':
+                colspec = colspec[:-1] + '-'
+            pos = colspec.index('-')
+            start, stop = int(colspec[0:pos]), colspec[pos+1:]
+            # 'stop' will be empty when colspec ends with a '-'
+            if not stop or int(stop) > len(line):
+                stop = len(line) - 1
+            else:
+                stop = int(stop)
+        # Raised when colspec is a single number, not a range.
+        except ValueError:
+            start = stop = int(colspec)
+
+        if start >= len(line):
+            if opts.ignore:
+                if opts.partial:
+                    row_new[idx_new] = line[idx_new:]
+                else:
+                    row_new = []
+                break
+            sys.stderr.write('input does not match byte specification:\n' +
+                " |" + ''.join('12345678 ' + str(x) 
+                    for x in range(1,9)) + '|\n' +
+                " |" + line[:-1] + '|\n'
+                "see 'columnate --help', '-i', and '-p'.\n")
+            sys.exit(1)
+
+        row_new[idx_new] += line[start-1:stop]
+        idx_new += 1
+
+    if len(row_new) == 1 and row_new[0] == '':
+        row_new = []
+
+    return row_new
+
+#---------------------------------------------------------------------------#
+# get_cols_all()                                                            #
+#---------------------------------------------------------------------------#
+def get_cols_all(line):
+    row = opts.re_separator.findall(line)[:-1]
+
+    row_new = [row[int(i)] for i in range(0, len(row)) 
+        if not opts.exclude 
+            or str(i+1) not in opts.exclude.split(',')]
+
+    return row_new
+
+#---------------------------------------------------------------------------#
+# initialize_table                                                          #
+#---------------------------------------------------------------------------#
+def initialize_table():
+    ct_args = dict()
+    row_props = dict()
+    # Multiple properties may refer to the same column, hence the List.
+    col_props = []
+
+    if opts.properties:
+        # Convert string (value of --properties) to dictionaries for
+        # ConsoleTable's constructor and calls to ct.set_col_property().
+        for arg in opts.properties.split(','):
+            name, val = arg.split('=')
+            if name == 'cjustify':
+                col, prop = val.split(':')
+                col_props.append({int(col): {'justify': prop}})
+            elif name == 'ccolor' or name == 'cbgcolor':
+                col, prop = val.split(':')
+                col_props.append({int(col): {
+                    'color' if name == 'ccolor' else 'bgcolor': prop}})
+            elif name == 'rcolor' or name == 'rbgcolor' or name == 'recolor':
+                if name not in row_props:
+                    row_props[name] = list()
+                row_props[name].append(val)
+            else:
+                ct_args.update({name: True 
+                    if val.lower() == 'true' 
+                    else False 
+                        if val.lower() == 'false' 
+                        else val})
+
+    ct = consoletable.ConsoleTable(
+        opts.title if opts.title else '',
+        utf8=not opts.ascii,
+        header=opts.header.split(',') if opts.header else '',
+        no_borders=opts.no_borders,
+        nb_pad=opts.pad,
+        **ct_args)
+
+    for prop in col_props:
+        for col in prop:
+            ct.set_col_property(col, prop[col])
+
+    return(ct, row_props)
+
+#---------------------------------------------------------------------------#
+# read_input                                                                #
+#---------------------------------------------------------------------------#
+def read_input():
+    ct, row_props = initialize_table()
+    line_nr = 1
+
+    for fname in opts.args:
+        for line in (sys.stdin 
+                if isinstance(fname, file) 
+                else file(fname)):
+            if opts.columns:
+                row_new = get_cols_by_idx(line)
+            elif opts.bytes:
+                row_new = get_cols_by_byte(line)
+            else:
+                row_new = get_cols_all(line)
+
+            if opts.whitespace:
+                row_new = [col.strip() for col in row_new]
+
+            if row_new:
+                props = get_row_props(line_nr, row_new, row_props)
+                ct.add_row(row_new, props)
+                line_nr += 1
+    return(ct.draw())
+
+#---------------------------------------------------------------------------#
+# get_row_props                                                             #
+#---------------------------------------------------------------------------#
+def get_row_props(line_nr, row, row_props):
+    props = dict()
+    for key in row_props:
+        for cspec in row_props[key]:
+            if key == 'rcolor':
+                col, prop = cspec.split(':')
+                if int(col) == line_nr:
+                    props['color'] = prop
+            elif key == 'rbgcolor':
+                col, prop = cspec.split(':')
+                if int(col) == line_nr:
+                    props['bgcolor'] = prop
+            elif key == 'recolor':
+                if '::' in cspec:
+                    regex, prop = cspec.rsplit('::')
+                else:
+                    try:
+                        regex, prop = cspec.split(':')
+                    except ValueError, e:
+                        if e.message == 'too many values to unpack':
+                            sys.stderr.write('Too many values to unpack; ' +
+                                "'recolor' may need a double-colon as\n" +
+                                'the delimiter; i.e., recolor=PATTERN::ANSI\n')
+                            sys.exit(1)
+                if re.search(regex, ' '.join(row)):
+                    props['color'] = prop
+    return props
+
+#---------------------------------------------------------------------------#
+# main                                                                      #
+#---------------------------------------------------------------------------#
+opts = get_opts()
+table = read_input()
+if len(table) != 0:
+    print(table)

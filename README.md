@@ -4,7 +4,7 @@
 
 
 
-This script is designed to prettify columnar data for easier readability. 
+This script/library is designed to prettify columnar data for easier readability. 
 
 Installation: 
 

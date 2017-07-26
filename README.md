@@ -1,6 +1,6 @@
 ### Columnate
 
-###Created by: Rick Esterling
+### Created by: Rick Esterling
 
 
 
